@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.13.35931.197 d17.13
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SNESOverlayApp", "SNESOverlayApp\SNESOverlayApp.csproj", "{D34D6CE8-817D-4773-822A-059BC538A20D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D34D6CE8-817D-4773-822A-059BC538A20D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D34D6CE8-817D-4773-822A-059BC538A20D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D34D6CE8-817D-4773-822A-059BC538A20D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D34D6CE8-817D-4773-822A-059BC538A20D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {A2BE0C17-CDAF-4B7B-B9B1-8E4118427FC7}
+	EndGlobalSection
+EndGlobal
