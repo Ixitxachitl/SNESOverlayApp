@@ -121,17 +121,21 @@ public class DirectInputInputSource
                     var state = device.GetCurrentState();
                     var pressed = state.Buttons;
                     var bitmask = new bool[12];
-/*                    for (int i = 0; i < pressed.Length; i++)
-                    {
-                        if (pressed[i])
-                            System.Diagnostics.Debug.WriteLine($"Button {i} pressed");
-                    }*/
+                    /*                    for (int i = 0; i < pressed.Length; i++)
+                                        {
+                                            if (pressed[i])
+                                                System.Diagnostics.Debug.WriteLine($"Button {i} pressed");
+                                        }*/
                     if (isIBuffalo)
                     {
-                        if (pressed.Length > 0 && pressed[0]) bitmask[1] = true; // B
-                        if (pressed.Length > 1 && pressed[1]) bitmask[8] = true; // Y
-                        if (pressed.Length > 2 && pressed[2]) bitmask[9] = true; // X
-                        if (pressed.Length > 3 && pressed[3]) bitmask[0] = true; // A
+                        // Unify iBuffalo & RetroFlag face layout:
+                        // DirectInput buttons 0..3 are Y, A, X, B (observed on these pads)
+                        if (pressed.Length > 0 && pressed[0]) bitmask[8] = true;  // A
+                        if (pressed.Length > 1 && pressed[1]) bitmask[0] = true;  // B
+                        if (pressed.Length > 2 && pressed[2]) bitmask[9] = true;  // X
+                        if (pressed.Length > 3 && pressed[3]) bitmask[1] = true;  // Y
+
+                        // Should be the same across both
                         if (pressed.Length > 4 && pressed[4]) bitmask[10] = true; // L
                         if (pressed.Length > 5 && pressed[5]) bitmask[11] = true; // R
                         if (pressed.Length > 6 && pressed[6]) bitmask[2] = true; // Select
@@ -194,28 +198,26 @@ public class DirectInputInputSource
 
                     var pressed_bumper = state.Buttons;
 
-                    // bitmask[10] is “L” and bitmask[11] is “R” (bumpers)
-                    bool isL = false;
-                    bool isR = false;
-
+                    // bitmask[10] = L, bitmask[11] = R (bumpers)
                     if (mapTriggersToBumpers)
                     {
-                        // 1) Check digital bumpers (safe for all)
-                        if (pressed_bumper.Length > 6 && pressed_bumper[6])
-                            isL = true;
-                        if (pressed_bumper.Length > 7 && pressed_bumper[7])
-                            isR = true;
+                        bool isL = false, isR = false;
 
-                        // 2) Only apply analog axis mapping for known-safe controllers
-                        if (isXbox || isIBuffalo || is8bitdo)
+                        // Only synthesize bumpers from analog triggers on devices that have them.
+                        // This avoids Start/Select (Buttons[6]/[7]) being treated as bumpers on iBuffalo/RetroFlag.
+                        if (isXbox || is8bitdo)
                         {
-                            if (pressed_bumper.Length > 6 && pressed_bumper[8])
-                                isL = true;
-                            if (pressed_bumper.Length > 7 && pressed_bumper[9])
-                                isR = true;
+                            // Many XInput-like devices expose LT/RT on Z (0..65535). Use wide thresholds.
+                            int z = state.Z;
+                            if (z < 20000) isL = true;     // LT
+                            if (z > 45000) isR = true;     // RT
+
+                            // If your specific device uses RotationZ instead, uncomment:
+                            // int rz = state.RotationZ;
+                            // if (rz < 20000) isL = true;
+                            // if (rz > 45000) isR = true;
                         }
 
-                        // Final bitmask write
                         if (isL) bitmask[10] = true;
                         if (isR) bitmask[11] = true;
                     }
