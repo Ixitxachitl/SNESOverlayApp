@@ -70,7 +70,19 @@ public class DirectInputInputSource
         return knownGuids.Contains(productGuid.ToString().ToLowerInvariant());
     }
 
-    private static void LogDeviceInfoToFile(Joystick device, string pnpId, bool isIBuffalo, bool isXbox, bool is8bitdo)
+    private static bool IsSony(string pnpId, Guid productGuid, Joystick device)
+    {
+        // Vendor ID for Sony: 054C
+        string vid = ExtractValue(pnpId, "VID_");
+        if (!string.IsNullOrEmpty(vid) && vid.Equals("054C", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Fallback by name (common for DualShock/DualSense on Windows)
+        var name = (device?.Properties?.ProductName ?? device?.Properties?.InstanceName ?? "").ToLowerInvariant();
+        return name.Contains("sony") || name.Contains("dualsense") || name.Contains("dualshock") || name.Contains("wireless controller");
+    }
+
+    private static void LogDeviceInfoToFile(Joystick device, string pnpId, bool isIBuffalo, bool isXbox, bool is8bitdo, bool isSony)
     {
         try
         {
@@ -87,13 +99,63 @@ public class DirectInputInputSource
             writer.WriteLine($"Button Count: {device.Capabilities.ButtonCount}");
             writer.WriteLine($"POVs: {device.Capabilities.PovCount}");
             writer.WriteLine($"Axes: {device.Capabilities.AxeCount}");
-            writer.WriteLine($"Flags: isIBuffalo={isIBuffalo}, isXbox={isXbox}, is8bitdo={is8bitdo}");
+            writer.WriteLine($"Flags: isIBuffalo={isIBuffalo}, isXbox={isXbox}, is8bitdo={is8bitdo}, isSony ={isSony}");
             writer.WriteLine();
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"Failed to write log: {ex}");
         }
+    }
+
+    // Extended: scans Z, Rx, Ry, Rz and Sliders for combined-or-split trigger behavior.
+    private static (bool left, bool right) DetectAnalogTriggers(SharpDX.DirectInput.JoystickState s)
+    {
+        bool left = false, right = false;
+
+        // Candidate axes
+        int z = s.Z;
+        int rx = s.RotationX;
+        int ry = s.RotationY;
+        int rz = s.RotationZ;
+        var sliders = s.Sliders ?? Array.Empty<int>();
+        int s0 = sliders.Length > 0 ? sliders[0] : -1;
+        int s1 = sliders.Length > 1 ? sliders[1] : -1;
+
+        // Thresholds
+        const int MID = 32767;
+        const int COMBINED_BAND = 12000; // wider band to tolerate driver noise around center
+        const int HIGH = 48000;          // split-axis "pressed"
+        const int LOW = 15000;          // combined-axis near 0 / near max
+
+        // Helpers
+        void CombinedCheck(int v)
+        {
+            if (v < 0) return;
+            if (v < LOW) left = true;          // toward 0
+            else if (v > 65535 - LOW) right = true; // toward max
+        }
+        void SplitCheck(int vLeft, int vRight)
+        {
+            if (vLeft >= 0 && vLeft > HIGH) left = true;
+            if (vRight >= 0 && vRight > HIGH) right = true;
+        }
+
+        // 1) Combined-axis heuristics (rest ~center)
+        if (Math.Abs(z - MID) < COMBINED_BAND) CombinedCheck(z);
+        if (Math.Abs(rx - MID) < COMBINED_BAND) CombinedCheck(rx);
+        if (Math.Abs(ry - MID) < COMBINED_BAND) CombinedCheck(ry);
+        if (Math.Abs(rz - MID) < COMBINED_BAND) CombinedCheck(rz);
+        if (Math.Abs(s0 - MID) < COMBINED_BAND) CombinedCheck(s0);
+        if (Math.Abs(s1 - MID) < COMBINED_BAND) CombinedCheck(s1);
+
+        // 2) Split-axes heuristics (rest near 0, increase on press)
+        // Assume L2 candidates: Z/Rx/Slider0; R2 candidates: Rz/Ry/Slider1
+        SplitCheck(z, rz);
+        SplitCheck(rx, ry);
+        SplitCheck(s0, s1);
+
+        return (left, right);
     }
 
     public void Start()
@@ -106,7 +168,8 @@ public class DirectInputInputSource
         bool isIBuffalo = IsIBuffalo(pnpId, device.Information.ProductGuid);
         bool isXbox = IsXInputXbox(pnpId, device.Information.ProductGuid);
         bool is8bitdo = Is8BitDo(pnpId, device.Information.ProductGuid);
-        LogDeviceInfoToFile(device, pnpId, isIBuffalo, isXbox, is8bitdo);
+        bool isSony = IsSony(pnpId, device.Information.ProductGuid, device);
+        LogDeviceInfoToFile(device, pnpId, isIBuffalo, isXbox, is8bitdo, isSony);
 
         cts = new CancellationTokenSource();
         var token = cts.Token;
@@ -121,11 +184,7 @@ public class DirectInputInputSource
                     var state = device.GetCurrentState();
                     var pressed = state.Buttons;
                     var bitmask = new bool[12];
-                    /*                    for (int i = 0; i < pressed.Length; i++)
-                                        {
-                                            if (pressed[i])
-                                                System.Diagnostics.Debug.WriteLine($"Button {i} pressed");
-                                        }*/
+
                     if (isIBuffalo)
                     {
                         // Unify iBuffalo & RetroFlag face layout:
@@ -203,23 +262,24 @@ public class DirectInputInputSource
                     {
                         bool isL = false, isR = false;
 
-                        // Only synthesize bumpers from analog triggers on devices that have them.
-                        // This avoids Start/Select (Buttons[6]/[7]) being treated as bumpers on iBuffalo/RetroFlag.
-                        if (isXbox || is8bitdo)
+                        // Only synthesize from “real” trigger sources on devices that have them.
+                        if (isXbox || is8bitdo || isSony)
                         {
-                            // Many XInput-like devices expose LT/RT on Z (0..65535). Use wide thresholds.
-                            int z = state.Z;
-                            if (z < 20000) isL = true;     // LT
-                            if (z > 45000) isR = true;     // RT
+                            var (l2, r2) = DetectAnalogTriggers(state);
+                            isL |= l2;
+                            isR |= r2;
 
-                            // If your specific device uses RotationZ instead, uncomment:
-                            // int rz = state.RotationZ;
-                            // if (rz < 20000) isL = true;
-                            // if (rz > 45000) isR = true;
+                            // DualSense often exposes L2/R2 as DIGITAL in DirectInput: Buttons[6]/[7].
+                            if (isSony)
+                            {
+                                var btn = state.Buttons;
+                                if (!isL && btn.Length > 6 && btn[6]) isL = true;  // L2
+                                if (!isR && btn.Length > 7 && btn[7]) isR = true;  // R2
+                            }
                         }
 
-                        if (isL) bitmask[10] = true;
-                        if (isR) bitmask[11] = true;
+                        if (isL) bitmask[10] = true;  // L bumper
+                        if (isR) bitmask[11] = true;  // R bumper
                     }
 
                     OnInputReceived?.Invoke(bitmask, normX, normY);
